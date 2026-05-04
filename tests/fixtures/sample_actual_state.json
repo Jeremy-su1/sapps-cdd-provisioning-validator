@@ -1,0 +1,23 @@
+{
+  "customer": "placeholder-customer",
+  "environment": "prd",
+  "resources": {
+    "tgw": [
+      {
+        "id": "tgw-example-001",
+        "attachment_id": "attach-example-001",
+        "route_table_id": "rtb-example-999"
+      }
+    ],
+    "firewall": [
+      {
+        "rule_id": "fw-rule-001",
+        "source_zone": "zone-a",
+        "destination_zone": "zone-b",
+        "action": "deny"
+      }
+    ],
+    "vmware_vm": [],
+    "nsxt_dfw": []
+  }
+}

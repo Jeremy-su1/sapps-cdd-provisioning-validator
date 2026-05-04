@@ -1,0 +1,18 @@
+{
+  "actions": [
+    {
+      "resource_type": "tgw",
+      "resource_id": "tgw-example-001",
+      "action": "create",
+      "reason": "resource not found in current state"
+    },
+    {
+      "resource_type": "firewall",
+      "resource_id": "fw-rule-001",
+      "action": "update",
+      "reason": "action field differs: desired=allow actual=deny"
+    }
+  ],
+  "skipped": [],
+  "conflicts": []
+}

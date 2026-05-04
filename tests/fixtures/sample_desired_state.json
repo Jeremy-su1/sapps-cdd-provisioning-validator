@@ -1,0 +1,43 @@
+{
+  "customer": "placeholder-customer",
+  "environment": "prd",
+  "resources": {
+    "tgw": [
+      {
+        "id": "tgw-example-001",
+        "attachment_id": "attach-example-001",
+        "route_table_id": "rtb-example-001"
+      }
+    ],
+    "firewall": [
+      {
+        "rule_id": "fw-rule-001",
+        "source_zone": "zone-a",
+        "destination_zone": "zone-b",
+        "action": "allow"
+      }
+    ],
+    "vmware_vm": [
+      {
+        "name": "vm-example-001",
+        "network": "net-example-001",
+        "cpu": 2,
+        "memory_gb": 4,
+        "os_template": "rhel8-generic"
+      }
+    ],
+    "nsxt_dfw": [
+      {
+        "section_name": "section-example-001",
+        "rule_name": "rule-example-001",
+        "source": "group-a",
+        "destination": "group-b",
+        "action": "allow"
+      }
+    ]
+  },
+  "metadata": {
+    "source_file": "example.xlsx",
+    "unsupported_sections": []
+  }
+}
