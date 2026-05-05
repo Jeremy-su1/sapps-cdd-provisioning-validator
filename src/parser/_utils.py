@@ -2,7 +2,8 @@
 
 import re
 
-_IP_PAT = re.compile(r'(\d{1,3}(?:\.\d{1,3}){3})')
+_IP_PAT      = re.compile(r'(\d{1,3}(?:\.\d{1,3}){3})')
+_FULL_IP_PAT = re.compile(r'^\d{1,3}(?:\.\d{1,3}){3}$')
 
 
 def split_phost(raw: str | None, known_ip: str | None = None) -> tuple[str, str]:
@@ -43,3 +44,14 @@ def normalize_cidr_list(raw: str | None) -> list[str]:
 def is_blank_row(row: tuple) -> bool:
     """Return True if every cell in the row is None."""
     return all(v is None for v in row)
+
+
+def is_valid_ipv4(value) -> bool:
+    """Return True only when value matches a complete IPv4 address (X.X.X.X).
+
+    Rejects placeholder values like 0, 1, "0", "1", None, and partial strings.
+    Used to guard split_phost() against treating unresolved placeholders as IPs.
+    """
+    if value is None:
+        return False
+    return bool(_FULL_IP_PAT.match(str(value).strip()))

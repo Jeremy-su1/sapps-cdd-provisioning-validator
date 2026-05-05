@@ -216,3 +216,11 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Real S2D workbooks — must never be committed (contain customer-confidential data)
+samples/*.xlsx
+samples/*.xls
+samples/*.xlsm
+
+# Debug outputs (contain parsed customer data)
+outputs/*.json
