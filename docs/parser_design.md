@@ -1,7 +1,7 @@
 # S2D Parser Design
 
-**Scope:** Accinfo, NWInfo, ServerInfo, FileSystem, SecurityGroup  
-**Out of scope:** DNS sheets, Saprouttab, Build_Status/Tasks, provisioning executor, validation engine, LLM
+**Scope:** `Accinfo`, `NWInfo`, `ServerInfo`, `FileSystem`, `SecurityGroup`  
+**Out of scope:** DNS sheets, `Saprouttab`, `Build_Status`/`Build_Tasks`, provisioning executor, validation engine, LLM layer
 
 ---
 
@@ -21,83 +21,135 @@
 
 ### 2.1 Accinfo
 
-**Layout:** Not a table. Each field is a label:value pair.
+#### Layout
+Not a table. Each field is a label:value pair.
 - Column A = field label
 - Column G = value
-- Section headers appear in column A (e.g. "General Information", "SID Information")
-- Blank rows separate sections; skip them
+- Section headers appear in column A (for example: `General Information`, `SID Information`)
+- Blank rows separate sections and should be skipped
 
-**Key observations:**
-- Multi-value fields (e.g. Customer N/W) use newline (`\n`) as separator — must be split into lists
-- SID Information section (rows ~29+) is a nested table with landscape columns — parse separately as `sid_table` or defer to a later phase
-- Some fields will be empty (e.g. VPC Name) — emit `None`, do not warn
+#### Key observations
+- Multi-value fields (for example: `Customer N/W`) use newline (`\n`) separators and must be split into lists
+- The `SID Information` section (around row 29+) is a nested table with landscape columns and should be parsed separately later or deferred
+- Some fields may be empty (for example: `VPC Name`) and should be emitted as `None` without warning
 
-**Required fields to extract:**
+#### Required fields to extract
+```text
+Customer Name                    → project_metadata.customer_name
+Customer (CID)                   → project_metadata.customer_id
+IP Range                         → global_network_context.ip_range
+DR IP Range                      → global_network_context.dr_ip_range
+Domain Name                      → project_metadata.domain_name
+Customer Connectivity            → global_network_context.connectivity_type
+Customer N/W                     → global_network_context.customer_networks
+Customer DNS Server (Primary)    → global_network_context.dns_primary
+Customer DNS Server (Secondary)  → global_network_context.dns_secondary
+System Timezone                  → project_metadata.timezone
 ```
-Customer Name         → project_metadata.customer_name
-Customer (CID)        → project_metadata.customer_id
-IP Range              → global_network_context.ip_range
-DR IP Range           → global_network_context.dr_ip_range
-Domain Name           → project_metadata.domain_name
-Customer Connectivity → global_network_context.connectivity_type
-Customer N/W          → global_network_context.customer_networks  (list)
-Customer DNS Server (Primary)   → global_network_context.dns_primary
-Customer DNS Server (Secondary) → global_network_context.dns_secondary
-System Timezone       → project_metadata.timezone
-```
 
-**Header/section detection:** Match col A string (stripped, case-insensitive) against a fixed label map. Unknown labels are logged as parse_warnings, not errors.
+#### Header/section detection
+Match column A string (stripped, case-insensitive) against a fixed `ACCINFO_LABEL_MAP`.
+
+- Unknown labels that look malformed or ambiguous should go to `parser_warnings`
+- Valid labels that are currently out of MVP scope should go to `ignored_labels`
+
+#### Ignored labels vs warnings
+The parser should distinguish between:
+- `parser_warnings`: ambiguous, malformed, or partially missing values
+- `ignored_labels`: valid labels that are currently out of MVP scope
+
+This prevents over-reporting normal out-of-scope items as warnings.
 
 ---
 
 ### 2.2 NWInfo
 
-**Layout:** Multi-section, each section has a section-header row followed by a sub-section row, followed by a column-header row, followed by data rows.
+#### Layout
+Multi-section sheet. Each section has:
+1. a section header row
+2. a subsection row
+3. a column header row
+4. data rows
 
-**Section structure:**
-```
-Row with col A = "Customer"          → customer network group
-Row with col A = "Internal - plan…"  → internal/storage network group
-Row with col A = "Server Routing Table" → routing table section
+#### Section structure
+```text
+Column A = "Customer"             → customer network group
+Column A = "Internal - plan..."   → internal/storage network group
+Column A = "Server Routing Table" → routing table section
 ```
 
 Within each network group:
+```text
+Column B = "PRD/non-PRD"  → PRD subnet block starts
+Column B = "DR"           → DR subnet block starts
+Column B = "No."          → table header row begins
 ```
-col B = "PRD/non-PRD"  → PRD subnet block starts
-col B = "DR"           → DR subnet block starts
-col B = "No."          → column headers for tabular rows below
-  → columns: No. | purpose | IP Range | NAT IP Range | hostname_pattern | ...
-```
 
-**Data rows** (numeric in col B) are subnet entries.  
-**Routing table** (rows after "Server Routing Table"): col A = No., col B = Routing Name, col C = Target, col D = Source, col E = Remark
+Typical data columns below the `No.` row:
+- No.
+- purpose
+- IP Range
+- NAT IP Range
+- hostname/FQDN pattern
+- optional remarks or usage notes
 
-**Required outputs:**
-- `network.subnets[]` — one entry per IP range row
-- `network.routing_table[]` — one entry per routing table row
+Routing table rows:
+- Column A = No.
+- Column B = Routing Name
+- Column C = Target
+- Column D = Source
+- Column E = Remark
 
-**Parsing rule:** Section boundaries are detected by value in col A (`row[0]`). Do not use row numbers — row positions can shift.
+#### Required outputs
+- `network.subnets[]`
+- `network.routing_table[]`
+
+#### Parsing rule
+Section boundaries must be detected by cell values, not fixed row numbers.
+
+#### Canonical purpose key
+The parser must preserve the original subnet purpose text as `purpose_raw`, but also emit a normalized internal key as `purpose_key`.
+
+Recommended canonical values:
+- `production_service`
+- `non_production_service`
+- `admin`
+- `heartbeat`
+- `public`
+- `storage`
+- `backup`
+- `other`
+
+Examples:
+- `Production Service` → `production_service`
+- `HeartBeat` → `heartbeat`
+
+This is required so downstream planner, validator, and executor logic can rely on stable internal values even if source wording varies.
 
 ---
 
 ### 2.3 ServerInfo
 
-**Layout:** Tabular. Rows 1 (annotations), 2–3 (two-row merged header), data from row 4.
+#### Layout
+Tabular sheet.
+- Row 1 = annotation / human note
+- Rows 2–3 = merged logical header
+- Data starts at row 4
 
-**Header reconstruction (rows 2–3 merged):**
+#### Header reconstruction
 
 | Col index | Effective header |
-|-----------|-----------------|
+|-----------|------------------|
 | 0 | phase |
 | 1 | vhost |
-| 2 | phost_raw (contains phost + admin_ip concatenated — see note) |
+| 2 | phost_raw |
 | 3 | landscape |
 | 4 | sid |
-| 5 | role_type (MT/AS/ER/AP/DB/WD) |
+| 5 | role_type |
 | 6 | main_solution |
 | 7 | sid_category_1 |
 | 8 | sid_category_2 |
-| 9 | entry_type (server/vip/lb) |
+| 9 | entry_type |
 | 10 | role_description |
 | 11 | host_no |
 | 12 | vm_or_bm |
@@ -127,8 +179,14 @@ col B = "No."          → column headers for tabular rows below
 | 36 | backup_enabled |
 | 37–42 | security agents (siem, soar, va, edr, antivirus, cspm) |
 
-**Critical anomaly — phost concatenation bug:**  
-`phost` (col 2) in the actual sheet contains the physical hostname and admin IP merged into one string without a separator, e.g. `"phexamplehost0110.83.214.11"`. Split using a regex on the IP pattern:
+#### Critical anomaly — `phost` concatenation
+`phost_raw` may contain physical hostname and admin IP concatenated without a separator, for example:
+
+```text
+phgenericap0110.1.0.11
+```
+
+Recommended split helper:
 
 ```python
 import re
@@ -141,17 +199,88 @@ def split_phost(raw: str) -> tuple[str, str]:
     return raw.strip(), ""
 ```
 
-**Filter rule:** Only emit rows where `entry_type` (col 9) == `"server"`. Skip `vip` and `lb` entries — they are virtual addresses, not provisionable VMs.
+#### Filter rule
+Only emit rows where `entry_type == "server"`.
+Skip `vip` and `lb` entries because they are not provisionable VM instances.
 
-**Boolean normalization:** Values `"O"` → `True`, `"X"` / `None` → `False`.
+#### Boolean normalization
+- `"O"` → `True`
+- `"X"` or `None` → `False`
+
+#### Required output shape
+`ServerInfo` should be normalized into `vmware_vm[]` entries using nested sections:
+
+- `identity`
+- `compute`
+- `network`
+- `availability`
+- `metadata`
+
+#### Example output
+```json
+{
+  "vmware_vm": [
+    {
+      "identity": {
+        "vhost": "vhgenericap01",
+        "phost": "phgenericap01",
+        "landscape": "PRD",
+        "sid": "TST",
+        "role_type": "AP",
+        "main_solution": "S/4HANA"
+      },
+      "compute": {
+        "os_version": "RHEL 9.4",
+        "cpu_vcores": 16,
+        "memory_gb": 256,
+        "appl_storage_gb": 100,
+        "nfs_storage_gb": 50,
+        "scp_image": "RHEL9-GI"
+      },
+      "network": {
+        "service_hostname": "vhgenericap01",
+        "service_ip": "10.0.0.11",
+        "admin_hostname": "phgenericap01",
+        "admin_ip": "10.1.0.11",
+        "admin_nat_ip": "192.168.7.11",
+        "backup_hostname": null,
+        "backup_ip": null,
+        "sr_dr_ip": null,
+        "internode_ip": null,
+        "hb_ip": null
+      },
+      "availability": {
+        "sla": "99.9%",
+        "ha": true,
+        "dr": false,
+        "pacemaker": true,
+        "db_sr": false,
+        "hana_haf": false,
+        "backup_enabled": true
+      },
+      "metadata": {
+        "phase": "Phase 1",
+        "entry_type": "server",
+        "role_description": "PAS#01",
+        "host_no": 1,
+        "vm_or_bm": "VM"
+      }
+    }
+  ]
+}
+```
 
 ---
 
 ### 2.4 FileSystem
 
-**Layout:** Tabular. Row 1 = input/auto annotations (skip). Row 2 = headers. Data from row 3.
+#### Layout
+Tabular sheet.
+- Row 1 = annotation/input notes
+- Row 2 = header
+- Data starts at row 3
 
-**Column mapping:**
+#### Column mapping
 
 | Col index | Field |
 |-----------|-------|
@@ -169,23 +298,50 @@ def split_phost(raw: str) -> tuple[str, str]:
 | 11 | admin_ip |
 | 12 | mount_point |
 | 13 | size_gb |
-| 14 | fs_type (xfs / swap / NFS) |
+| 14 | fs_type |
 | 15 | vg_name |
 | 16 | nfs_group |
 | 17 | remark |
 | 18 | check |
 
-**Size anomaly:** Some size values contain formula expressions (`"MIN(256,1024)"`, `"1.5*256"`). Store as strings; do not evaluate. Flag as `size_formula` in the output if not a plain integer.
+#### Size anomaly
+Some `size_gb` values are formulas or expressions such as:
+- `MIN(256,1024)`
+- `1.5*256`
 
-**Grouping:** The parser should return a flat list of filesystem entries. Each entry carries `hostname` and `admin_ip` for cross-referencing to the VM list. Grouping by VM is the consumer's responsibility (planner/validator), not the parser's.
+Do not evaluate them.
+Store:
+- `size_gb = None`
+- `size_formula = "<raw string>"`
+
+if the value is not a plain integer.
+
+#### Grouping rule
+The parser should return a flat list of filesystem entries.
+Grouping by VM is the responsibility of planner or validator, not the parser.
+
+#### Join strategy
+The parser must preserve enough fields for downstream matching.
+
+Recommended join priority:
+1. `hostname`
+2. fallback: `admin_ip`
+3. fallback: `landscape + sid + server_type`
+
+If no reliable match can be established later, downstream logic should emit a validation warning rather than forcing an implicit match.
 
 ---
 
 ### 2.5 SecurityGroup
 
-**Layout:** Tabular. Row 1 = empty. Row 2 = top-level section labels (Source / Target / ETC / Work). Row 3 = column headers. Data from row 4.
+#### Layout
+Tabular sheet.
+- Row 1 = empty / spacer
+- Row 2 = top-level grouping row (`Source`, `Target`, `ETC`, `Work`)
+- Row 3 = actual column headers
+- Data starts at row 4
 
-**Column mapping (from row 3):**
+#### Column mapping
 
 | Col index | Field |
 |-----------|-------|
@@ -207,45 +363,75 @@ def split_phost(raw: str) -> tuple[str, str]:
 | 15 | psm_fw |
 | 16 | psm_sg |
 
-**Port format:** Port values can be a single number, comma-separated list, or range string with `~` or `-` (e.g. `"443"`, `"1128,1129"`, `"3200-3399"`, `"30200~30298"`). Store as a string — do not parse port ranges. Mark as `port_expression`.
+#### Port format
+Port values may be:
+- single value: `443`
+- comma-separated: `1128,1129`
+- range: `3200-3399`
+- tilde range: `30200~30298`
 
-**Control flags:** `"O"` → `True`, `"X"` or `None` → `False`.
+Do not parse ranges at parser stage.
+Store raw string and optionally mark it as `port_expression`.
 
-**Skip condition:** Skip rows where all of cols 0–12 are `None` (fully blank rows between sections).
+#### Boolean normalization
+- `"O"` → `True`
+- `"X"` or `None` → `False`
+
+#### Skip rule
+Skip rows where columns 0–12 are all blank.
+
+#### Parser output role
+In the parser phase, this sheet should first be normalized into a generic rule candidate list:
+
+- `firewall_rule_candidates[]`
+
+Do not fully decide platform-specific rule execution targets yet.
+That transformation should happen later in normalization/planning, where candidates may be split into:
+
+- `tgw_firewall_rules[]`
+- `nsxt_dfw_rules[]`
+
+This is necessary because the same source row can map differently depending on source/target identity, network scope, and platform-specific execution constraints.
 
 ---
 
 ## 3. Header / Section Detection Strategy
 
 | Sheet | Detection method |
-|-------|-----------------|
-| Accinfo | Match `row[0]` (stripped, lower) against `ACCINFO_LABEL_MAP` dict |
-| NWInfo | Match `row[0]` against known section markers (`"customer"`, `"internal"`, `"server routing table"`); match `row[1]` for sub-sections (`"prd/non-prd"`, `"dr"`, `"no."`) |
-| ServerInfo | Fixed rows 2–3 as headers; data starts row 4; detect end by all-None row |
-| FileSystem | Fixed row 2 as header; data starts row 3; end on all-None row |
-| SecurityGroup | Fixed row 3 as header; data starts row 4; skip all-None rows inline |
+|-------|------------------|
+| Accinfo | Match `row[0]` (stripped, lower) against `ACCINFO_LABEL_MAP` |
+| NWInfo | Match `row[0]` against section markers (`customer`, `internal`, `server routing table`); use `row[1]` for subsection markers (`prd/non-prd`, `dr`, `no.`) |
+| ServerInfo | Fixed rows 2–3 as header; data starts at row 4; detect end by blank row |
+| FileSystem | Fixed row 2 as header; data starts at row 3; stop on blank row |
+| SecurityGroup | Fixed row 3 as header; data starts at row 4; skip blank rows inline |
 
-**General rule:** Never use absolute row numbers for section boundaries. Always detect by value matching so the parser is resilient to inserted blank rows.
+### General rule
+Never rely on absolute row numbers for section boundaries where section text can be matched.
+Use value-based detection whenever possible so the parser remains resilient to inserted rows or formatting shifts.
 
 ---
 
 ## 4. Mapping: Sheets → Desired-State Objects
 
-```
-Accinfo      →  desired_state.project_metadata
+```text
+Accinfo       → desired_state.project_metadata
                 desired_state.global_network_context
 
-NWInfo       →  desired_state.network.subnets[]
+NWInfo        → desired_state.network.subnets[]
                 desired_state.network.routing_table[]
 
-ServerInfo   →  desired_state.vmware_vm[]   (filtered: entry_type == "server")
+ServerInfo    → desired_state.vmware_vm[]
+                (filtered where entry_type == "server")
 
-FileSystem   →  desired_state.filesystem[]  (flat list, keyed by hostname)
+FileSystem    → desired_state.filesystem[]
+                (flat list, not grouped)
 
-SecurityGroup → desired_state.firewall_rules[]
+SecurityGroup → desired_state.firewall_rule_candidates[]
 ```
 
-### Top-level desired-state shape
+---
+
+## 5. Top-Level Desired-State Shape
 
 ```json
 {
@@ -269,7 +455,8 @@ SecurityGroup → desired_state.firewall_rules[]
         "group": "<customer | internal>",
         "env": "<prd | dr>",
         "seq_no": 1,
-        "purpose": "<purpose string>",
+        "purpose_raw": "<purpose string>",
+        "purpose_key": "<canonical value>",
         "ip_range": "<CIDR>",
         "nat_ip_range": "<CIDR or N/A>",
         "hostname_pattern": "<pattern or null>"
@@ -286,23 +473,11 @@ SecurityGroup → desired_state.firewall_rules[]
   },
   "vmware_vm": [
     {
-      "vhost": "<virtual hostname>",
-      "phost": "<physical hostname>",
-      "landscape": "<PRD | DEV | QAS | DR>",
-      "sid": "<SID>",
-      "role_type": "<MT | AS | ER | AP | DB | WD>",
-      "main_solution": "<solution string>",
-      "os_version": "<RHEL 9.4 | ...>",
-      "cpu_vcores": 0,
-      "memory_gb": 0,
-      "appl_storage_gb": 0,
-      "service_ip": "<IP>",
-      "admin_ip": "<IP>",
-      "admin_nat_ip": "<IP or null>",
-      "sla": "<percent string>",
-      "ha": false,
-      "dr": false,
-      "backup_enabled": false
+      "identity": {},
+      "compute": {},
+      "network": {},
+      "availability": {},
+      "metadata": {}
     }
   ],
   "filesystem": [
@@ -319,61 +494,91 @@ SecurityGroup → desired_state.firewall_rules[]
       "remark": "<string or null>"
     }
   ],
-  "firewall_rules": [
-    {
-      "source": {
-        "system": "<system>",
-        "category": "<category>",
-        "hostname": "<hostname>",
-        "ip": "<IP or CIDR>",
-        "landscape": "<env>"
-      },
-      "target": {
-        "system": "<system>",
-        "category": "<category>",
-        "hostname": "<hostname>",
-        "ip": "<IP or CIDR>"
-      },
-      "port": "<port expression>",
-      "protocol": "<TCP | UDP>",
-      "expiration": "<Permanent | date>",
-      "purpose": "<string>",
-      "controls": {
-        "cus_fw": true,
-        "cus_sg": true,
-        "psm_fw": true,
-        "psm_sg": true
-      }
-    }
-  ]
+  "firewall_rule_candidates": [],
+  "parser_warnings": [],
+  "ignored_labels": []
 }
 ```
 
 ---
 
-## 5. Recommended Parser Function Structure
+## 6. Recommended Parser Function Structure
 
-```
+```text
 src/
   parser/
-    __init__.py          ← parse_s2d() entry point; orchestrates all sub-parsers
-    accinfo.py           ← parse_accinfo(ws) → dict
-    nwinfo.py            ← parse_nwinfo(ws) → dict
-    serverinfo.py        ← parse_serverinfo(ws) → list[dict]
-    filesystem.py        ← parse_filesystem(ws) → list[dict]
-    securitygroup.py     ← parse_securitygroup(ws) → list[dict]
-    _utils.py            ← shared helpers: split_phost(), normalize_bool(), normalize_cidr_list()
+    __init__.py
+    accinfo.py
+    nwinfo.py
+    serverinfo.py
+    filesystem.py
+    securitygroup.py
+    _utils.py
 ```
 
-### Entry point (`__init__.py`)
+### Module roles
+
+- `__init__.py`  
+  Entry point. Loads workbook and orchestrates sub-parsers.
+
+- `accinfo.py`  
+  Parses global metadata and network context.
+
+- `nwinfo.py`  
+  Parses subnet definitions and routing table.
+
+- `serverinfo.py`  
+  Parses VM/server entries.
+
+- `filesystem.py`  
+  Parses filesystem/storage entries.
+
+- `securitygroup.py`  
+  Parses firewall rule candidates.
+
+- `_utils.py`  
+  Shared helpers such as:
+  - `split_phost()`
+  - `normalize_bool()`
+  - `normalize_cidr_list()`
+  - `is_blank_row()`
+
+---
+
+## 7. Entry Point Design
+
+Internal sub-parsers may return `(data, warnings)` tuples, but the top-level `parse_s2d()` function should return a single structured result object that includes parser warnings.
+
+### Recommended shape
 
 ```python
-def parse_s2d(workbook_path: str) -> tuple[ParseResult, ParseWarnings]:
-    wb = openpyxl.load_workbook(workbook_path, read_only=True, data_only=True)
-    warnings: ParseWarnings = []
+def parse_s2d(workbook_path: str) -> dict:
+    ...
+    return {
+        "project_metadata": project_metadata,
+        "global_network_context": network_context,
+        "network": network,
+        "vmware_vm": vmware_vm,
+        "filesystem": filesystem,
+        "firewall_rule_candidates": firewall_rule_candidates,
+        "parser_warnings": warnings,
+        "ignored_labels": ignored_labels,
+    }
+```
 
-    project_metadata, network_context, w = parse_accinfo(wb["Accinfo"])
+This makes downstream reporting, fixture comparison, and consumer integration simpler than returning a separate tuple.
+
+### Example entry point
+
+```python
+def parse_s2d(workbook_path: str) -> dict:
+    wb = openpyxl.load_workbook(workbook_path, read_only=True, data_only=True)
+    warnings: list[str] = []
+    ignored_labels: list[str] = []
+
+    project_metadata, network_context, w, ignored = parse_accinfo(wb["Accinfo"])
     warnings.extend(w)
+    ignored_labels.extend(ignored)
 
     network, w = parse_nwinfo(wb["NWInfo"])
     warnings.extend(w)
@@ -384,7 +589,7 @@ def parse_s2d(workbook_path: str) -> tuple[ParseResult, ParseWarnings]:
     filesystem, w = parse_filesystem(wb["FileSystem"])
     warnings.extend(w)
 
-    firewall_rules, w = parse_securitygroup(wb["SecurityGroup"])
+    firewall_rule_candidates, w = parse_securitygroup(wb["SecurityGroup"])
     warnings.extend(w)
 
     return {
@@ -393,51 +598,59 @@ def parse_s2d(workbook_path: str) -> tuple[ParseResult, ParseWarnings]:
         "network": network,
         "vmware_vm": vmware_vm,
         "filesystem": filesystem,
-        "firewall_rules": firewall_rules,
-    }, warnings
+        "firewall_rule_candidates": firewall_rule_candidates,
+        "parser_warnings": warnings,
+        "ignored_labels": ignored_labels,
+    }
 ```
 
-### Each sub-parser signature
+---
+
+## 8. Sub-Parser Signatures
 
 ```python
 # accinfo.py
-def parse_accinfo(ws) -> tuple[dict, dict, list[str]]:
-    """Returns (project_metadata, global_network_context, warnings)."""
+def parse_accinfo(ws) -> tuple[dict, dict, list[str], list[str]]:
+    """Returns (project_metadata, global_network_context, warnings, ignored_labels)."""
 
 # nwinfo.py
 def parse_nwinfo(ws) -> tuple[dict, list[str]]:
-    """Returns (network_dict, warnings). network_dict has 'subnets' and 'routing_table'."""
+    """Returns (network_dict, warnings)."""
 
 # serverinfo.py
 def parse_serverinfo(ws) -> tuple[list[dict], list[str]]:
-    """Returns (vm_list, warnings). Only 'server' entry_type rows included."""
+    """Returns (vm_list, warnings). Only rows with entry_type == 'server' are included."""
 
 # filesystem.py
 def parse_filesystem(ws) -> tuple[list[dict], list[str]]:
-    """Returns (filesystem_list, warnings). Flat list keyed by hostname."""
+    """Returns (filesystem_list, warnings)."""
 
 # securitygroup.py
 def parse_securitygroup(ws) -> tuple[list[dict], list[str]]:
-    """Returns (firewall_rules, warnings)."""
+    """Returns (firewall_rule_candidates, warnings)."""
 ```
 
-### Shared utilities (`_utils.py`)
+---
+
+## 9. Shared Utilities
 
 ```python
 import re
+
 _IP_PAT = re.compile(r'(\d{1,3}(?:\.\d{1,3}){3})')
 
 def split_phost(raw: str | None) -> tuple[str, str]:
-    """Split concatenated 'phost<IP>' string → (hostname, ip)."""
+    """Split concatenated 'phost<IP>' string into (hostname, ip)."""
     if not raw:
         return "", ""
-    m = _IP_PAT.search(str(raw))
+    raw = str(raw)
+    m = _IP_PAT.search(raw)
     if m:
-        return str(raw)[:m.start()].strip(), m.group(1)
-    return str(raw).strip(), ""
+        return raw[:m.start()].strip(), m.group(1)
+    return raw.strip(), ""
 
 def normalize_bool(value) -> bool:
-    """'O' → True, anything else → False."""
+    """Return True only for 'O'."""
     return str(value).strip().upper() == "O"
 
 def normalize_cidr_list(raw: str | None) -> list[str]:
@@ -452,55 +665,89 @@ def is_blank_row(row: tuple) -> bool:
 
 ---
 
-## 6. Implementation Order
+## 10. Implementation Order
 
-Implement in this order — each parser is independently testable:
+Implement in this order:
 
 ### Step 1: `_utils.py`
-- Implement and unit-test: `split_phost`, `normalize_bool`, `normalize_cidr_list`, `is_blank_row`
-- Fixture: simple inline unit tests, no Excel file needed
+Implement and unit-test:
+- `split_phost`
+- `normalize_bool`
+- `normalize_cidr_list`
+- `is_blank_row`
 
-### Step 2: `accinfo.py`
-- Simplest layout (key-value form, small sheet)
-- Define `ACCINFO_LABEL_MAP` dict mapping label strings → output keys
-- Test with a minimal fixture dict simulating the ws rows
-
-### Step 3: `serverinfo.py`
-- Most important for VM provisioning
-- Implement `split_phost` usage here
-- Filter on `entry_type == "server"`
-- Test with a 5-row fixture covering VM, VIP, and LB rows
-
-### Step 4: `filesystem.py`
-- Tabular, straightforward
-- Handle `size_formula` edge case
-- Test with fixture including NFS and formula-size rows
-
-### Step 5: `securitygroup.py`
-- Tabular, straightforward
-- Handle port expression passthrough
-- Handle `None` control flags → `False`
-- Test with fixture including multi-port and range port rows
-
-### Step 6: `nwinfo.py`
-- Most complex (section detection logic)
-- Implement section state machine
-- Test with fixture covering Customer + Internal + Routing sections
-
-### Step 7: Wire `parse_s2d()` in `__init__.py`
-- Integration smoke test using the actual sample workbook
-- Verify top-level keys present, vmware_vm list non-empty, no unhandled exceptions
+No Excel fixture required.
 
 ---
 
-## 7. Key Risks and Mitigations
+### Step 2: `accinfo.py`
+Why first:
+- simplest layout
+- defines global context
+- fixes top-level output structure early
+
+Implement:
+- `ACCINFO_LABEL_MAP`
+- label matching
+- `project_metadata`
+- `global_network_context`
+- `ignored_labels`
+
+---
+
+### Step 3: `serverinfo.py`
+Why before `nwinfo.py`:
+`ServerInfo` is implemented earlier because it provides the highest-value provisioning input for the MVP and has a more deterministic tabular structure than the multi-section `NWInfo` sheet.
+
+Implement:
+- merged-header reconstruction
+- `split_phost()` integration
+- `entry_type == "server"` filter
+- nested VM object structure
+
+---
+
+### Step 4: `filesystem.py`
+Implement:
+- flat filesystem entry parsing
+- `size_formula` handling
+- no grouping yet
+
+---
+
+### Step 5: `securitygroup.py`
+Implement:
+- row parsing into `firewall_rule_candidates`
+- port expression passthrough
+- boolean control flag normalization
+- blank row skipping
+
+---
+
+### Step 6: `nwinfo.py`
+Implement:
+- section state machine
+- subnet group parsing
+- routing table parsing
+- `purpose_key` normalization
+
+This parser is more complex and should come after the simpler deterministic parsers.
+
+---
+
+### Step 7: `parse_s2d()` in `__init__.py`
+Integrate all sub-parsers and return the final desired-state object.
+
+---
+
+## 11. Key Risks and Mitigations
 
 | Risk | Mitigation |
-|------|-----------|
-| phost+IP concatenation in ServerInfo col 2 | `split_phost()` regex in `_utils.py`; test with known examples |
-| NWInfo section boundaries shift if rows inserted | Detect by col A value, not row index |
-| FileSystem size_gb contains formula strings | Store as string in `size_formula`, set `size_gb = None` |
-| Accinfo SID table (rows 29+) is complex nested structure | Out of scope for initial parser; skip after "SID Information" label |
-| SecurityGroup port ranges contain `~` (not `-`) | Store as raw string; consumer normalizes when needed |
-| Blank rows within data sections | `is_blank_row()` guard in all tabular parsers |
-| openpyxl `data_only=True` may not resolve formula values | Document this constraint; size_formula field handles it |
+|------|------------|
+| `phost_raw` contains hostname and IP merged | use `split_phost()` and fixture tests |
+| `NWInfo` section boundaries shift | use text-based section detection, not row positions |
+| `FileSystem.size_gb` contains formulas | keep raw value in `size_formula`, set numeric field to `None` |
+| `Accinfo` contains many out-of-scope labels | track them under `ignored_labels` |
+| `SecurityGroup` rules may later split into multiple platform outputs | keep parser output generic as `firewall_rule_candidates` |
+| blank rows appear inside table sections | use `is_blank_row()` in all tabular parsers |
+| formula cells may not resolve under `data_only=True` | document limitation and keep raw-compatible fallback behavior |
