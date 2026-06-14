@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-_COMPARE_FIELDS = ("port", "protocol", "source_ip")
+_COMPARE_FIELDS = ("action", "port", "protocol", "source_ip", "target_ip")
 _CONTENT_KEY_FIELDS = ("source_ip", "target_ip", "protocol", "port")
 
 
@@ -34,7 +34,7 @@ def _field_diff(desired: dict, actual: dict) -> dict:
     for f in _COMPARE_FIELDS:
         dv = desired.get(f)
         av = actual.get(f)
-        if dv is not None and av is not None and dv != av:
+        if dv != av:
             diff[f] = {"desired": dv, "actual": av}
     return diff
 

@@ -12,20 +12,38 @@ from src.validator.scp_firewall_validator import (
 # Fixture helpers
 # ---------------------------------------------------------------------------
 
-def _desired(resource_id="scp-fw-0", port="443", protocol="TCP", source_ip="10.0.1.11"):
+def _desired(
+    resource_id="scp-fw-0",
+    port="443",
+    protocol="TCP",
+    source_ip="10.0.1.11",
+    target_ip="203.0.113.5",
+    action="permit",
+):
     return {
         "resource_id": resource_id,
         "port":        port,
         "protocol":    protocol,
         "source_ip":   source_ip,
+        "target_ip":   target_ip,
+        "action":      action,
     }
 
-def _actual(resource_id="scp-fw-0", port="443", protocol="TCP", source_ip="10.0.1.11"):
+def _actual(
+    resource_id="scp-fw-0",
+    port="443",
+    protocol="TCP",
+    source_ip="10.0.1.11",
+    target_ip="203.0.113.5",
+    action="permit",
+):
     return {
         "resource_id": resource_id,
         "port":        port,
         "protocol":    protocol,
         "source_ip":   source_ip,
+        "target_ip":   target_ip,
+        "action":      action,
     }
 
 
@@ -167,6 +185,44 @@ class TestDivergedRules:
             [_actual(source_ip="10.0.1.99")],
         )
         assert result.unmatched[0]["status"] == "diverged"
+
+    def test_target_ip_divergence_is_diverged(self):
+        result = validate_scp_firewall(
+            [_desired(target_ip="203.0.113.5")],
+            [_actual(target_ip="203.0.113.99")],
+        )
+        assert result.unmatched[0]["status"] == "diverged"
+        assert "target_ip" in result.unmatched[0]["diff"]
+
+    def test_action_divergence_is_diverged(self):
+        result = validate_scp_firewall(
+            [_desired(action="permit")],
+            [_actual(action="deny")],
+        )
+        assert result.unmatched[0]["status"] == "diverged"
+        assert "action" in result.unmatched[0]["diff"]
+
+    def test_desired_port_with_missing_actual_port_is_diverged(self):
+        result = validate_scp_firewall(
+            [_desired(port="443")],
+            [_actual(port=None)],
+        )
+        assert result.unmatched[0]["status"] == "diverged"
+        assert result.unmatched[0]["diff"]["port"] == {
+            "desired": "443",
+            "actual": None,
+        }
+
+    def test_missing_desired_port_with_actual_port_is_diverged(self):
+        result = validate_scp_firewall(
+            [_desired(port=None)],
+            [_actual(port="443")],
+        )
+        assert result.unmatched[0]["status"] == "diverged"
+        assert result.unmatched[0]["diff"]["port"] == {
+            "desired": None,
+            "actual": "443",
+        }
 
 
 # ---------------------------------------------------------------------------
