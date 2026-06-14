@@ -124,6 +124,28 @@ class TestUnmatchedRules:
         assert "diff" in result.unmatched[0]
         assert "port" in result.unmatched[0]["diff"]
 
+    def test_actual_missing_port_is_diverged(self):
+        result = validate_dfw(
+            [_desired(port="443")],
+            [_actual(port=None)],
+        )
+        assert result.unmatched[0]["status"] == "diverged"
+        assert result.unmatched[0]["diff"]["port"] == {
+            "desired": "443",
+            "actual": None,
+        }
+
+    def test_desired_missing_port_is_diverged(self):
+        result = validate_dfw(
+            [_desired(port=None)],
+            [_actual(port="443")],
+        )
+        assert result.unmatched[0]["status"] == "diverged"
+        assert result.unmatched[0]["diff"]["port"] == {
+            "desired": None,
+            "actual": "443",
+        }
+
     def test_summary_unmatched_count(self):
         desired = [_desired(rule_id="rule-001"), _desired(rule_id="rule-002")]
         actual  = [_actual(rule_id="rule-001")]

@@ -32,7 +32,7 @@ def _field_diff(desired: dict, actual: dict) -> dict:
     for f in _COMPARE_FIELDS:
         dv = desired.get(f)
         av = actual.get(f)
-        if dv is not None and av is not None and dv != av:
+        if dv != av:
             diff[f] = {"desired": dv, "actual": av}
     return diff
 
