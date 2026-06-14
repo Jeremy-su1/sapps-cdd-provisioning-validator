@@ -38,6 +38,7 @@ from src.classification.firewall_rules import (
 )
 from src.transforms.scp_firewall_realizer import realize_rules
 from src.collector.scp_firewall_collector import ScpFirewallCollector, CollectorError
+from src.config import load_env_file
 from src.validator.scp_firewall_validator import validate_realized_vs_actual
 
 
@@ -62,6 +63,7 @@ def _build_platform_networks(subnets: list[dict]) -> list:
 
 
 def main(workbook_path: Path) -> None:
+    load_env_file(_REPO_ROOT / ".env")
     print("=" * 70)
     print("SCP Firewall: Realized Rules vs Actual State")
     print("=" * 70)

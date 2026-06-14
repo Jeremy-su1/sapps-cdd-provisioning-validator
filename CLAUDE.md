@@ -4,7 +4,9 @@
 
 This repository is a generic scaffold for an SAP PS(Premium Supplier) S2D-driven infrastructure onboarding automation system in SCP.
 
-The project goal is to convert standard S2D Excel documents into executable desired-state definitions, provision selected infrastructure resources, validate the actual state against the desired state, and support incremental add-on changes.
+The project goal is to parse standard S2D Excel documents into executable desired-state definitions, drive SCP APIs or CLI commands to provision selected infrastructure resources, collect the actual state, validate drift against the desired state, and support incremental add-on changes.
+
+The current implementation is intentionally a scaffold and partial pipeline: the end-to-end flow from Excel parsing through real SCP provisioning and validation is the target outcome, but not every orchestration path is fully implemented yet.
 
 This public repository must remain generic and safe for open publication.
 Do not include company-confidential values, customer-specific payloads, real endpoints, credentials, or proprietary naming conventions.
@@ -13,7 +15,7 @@ Do not include company-confidential values, customer-specific payloads, real end
 
 ## Current MVP Scope
 
-The current MVP scope is intentionally limited to the following onboarding layers and resources:
+The current MVP scope is intentionally limited to the following onboarding layers and resources, with the end-to-end objective of parsing Excel input, executing SCP API/CLI operations, and validating the resulting infrastructure state:
 
 1. TGW-related provisioning and validation
 2. Firewall provisioning and validation
@@ -34,14 +36,13 @@ Do not expand scope unless explicitly requested.
 
 The system follows this flow:
 
-1. Parse S2D Excel
-2. Build normalized desired-state JSON
-3. Generate deterministic provisioning plan
-4. Execute create/read operations via API or CLI
-5. Collect actual state
-6. Compare desired state vs actual state
-7. Use LLM only for semantic mapping, explanation, severity support, and change intent parsing
-8. Render machine-readable and human-readable reports
+1. Parse S2D Excel into normalized desired-state JSON
+2. Generate a deterministic provisioning plan
+3. Execute create/read operations via SCP API or CLI
+4. Collect actual infrastructure state
+5. Compare desired state vs actual state during validation
+6. Use LLM only for semantic mapping, explanation, severity support, and change-intent parsing during validation/reporting
+7. Render machine-readable and human-readable reports
 
 ---
 
@@ -54,10 +55,12 @@ Truth must come from explicit schema validation and rule-based comparison.
 ### LLM is not the source of truth
 Use LLM only for:
 - semantic term mapping
-- explanation generation
+- validation/explanation support
 - severity wording support
 - human-readable correction guidance
 - natural-language change request interpretation
+
+LLM must never be the decision source for provisioning or destructive operations; it may assist with interpretation and explanation during validation.
 
 Do not let LLM directly decide destructive or state-changing actions.
 

@@ -27,9 +27,11 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_REPO_ROOT))
 
 from src.collector.scp_firewall_collector import ScpFirewallCollector, CollectorError
+from src.config import load_env_file
 
 
 def main() -> None:
+    load_env_file(_REPO_ROOT / ".env")
     endpoint   = os.environ.get("SCP_ENDPOINT", "")
     access_key = os.environ.get("SCP_ACCESS_KEY", "")
     secret_key = os.environ.get("SCP_SECRET_KEY", "")
