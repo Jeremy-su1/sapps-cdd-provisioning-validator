@@ -1,5 +1,6 @@
 """Tests for src/validator/scp_firewall_validator.py — desired vs actual SCP firewall comparison."""
 import pytest
+from scripts import debug_scp_firewall_e2e
 from src.validator.scp_firewall_validator import (
     validate_scp_firewall,
     validate_realized_vs_actual,
@@ -267,6 +268,35 @@ class TestMixedScenario:
         assert result.summary["matched"] == 1
         assert result.summary["unmatched"] == 2
         assert result.summary["unexpected"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Debug pipeline integration
+# ---------------------------------------------------------------------------
+
+class TestDebugPipelineIntegration:
+    def test_missing_candidate_action_defaults_to_permit_for_validation(self):
+        build_desired = getattr(
+            debug_scp_firewall_e2e,
+            "_build_desired_for_validation",
+            None,
+        )
+        assert build_desired is not None
+
+        candidates = [{
+            "origin_idx": 0,
+            "source_ip": "10.0.1.11",
+            "target_ip": "203.0.113.5",
+            "protocol": "TCP",
+            "port": "443",
+            "requires_manual_review": False,
+        }]
+        desired = build_desired(candidates)
+
+        result = validate_scp_firewall(desired, [_actual()])
+
+        assert desired[0]["action"] == "permit"
+        assert result.summary == {"matched": 1, "unmatched": 0, "unexpected": 0}
 
 
 # ---------------------------------------------------------------------------

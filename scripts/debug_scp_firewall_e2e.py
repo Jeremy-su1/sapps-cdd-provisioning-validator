@@ -108,6 +108,18 @@ def _print_summary(label: str, data: dict) -> None:
         print(f"    {k}: {v}")
 
 
+def _build_desired_for_validation(tgw_candidates: list[dict]) -> list[dict]:
+    return [
+        {
+            **rule,
+            "resource_id": f"scp-fw-{rule['origin_idx']}",
+            "action": rule.get("action", "permit"),
+        }
+        for rule in tgw_candidates
+        if not rule.get("requires_manual_review")
+    ]
+
+
 def main(workbook_path: Path) -> None:
     print(f"Opening: {workbook_path}")
     state = parse_s2d(str(workbook_path))
@@ -174,11 +186,7 @@ def main(workbook_path: Path) -> None:
 
     # ── Step 5: Validate ──────────────────────────────────────────────────────
     print("\n[Validate]")
-    desired_for_validation = [
-        {**rule, "resource_id": f"scp-fw-{rule['origin_idx']}"}
-        for rule in tgw_candidates
-        if not rule.get("requires_manual_review")
-    ]
+    desired_for_validation = _build_desired_for_validation(tgw_candidates)
     val_result = validate_scp_firewall(desired_for_validation, actual_rules)
     _print_summary("Validation summary", val_result.summary)
 
